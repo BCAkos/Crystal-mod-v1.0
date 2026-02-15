@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 const express = require('express');
 const {
   Client,
@@ -32,8 +33,10 @@ const env = {
   clientId: process.env.CLIENT_ID,
   guildId: process.env.GUILD_ID,
   panelPort: Number(process.env.PANEL_PORT || 3000),
-  panelToken: process.env.PANEL_TOKEN || 'change-me',
   panelUrl: process.env.PANEL_URL || `http://localhost:${process.env.PANEL_PORT || 3000}`,
+  panelUsers: parseList(process.env.PANEL_LOGIN_USERS),
+  panelPasswords: parseList(process.env.PANEL_LOGIN_PASSWORDS),
+  panelSessionHours: Number(process.env.PANEL_SESSION_HOURS || 12),
   logChannelId: process.env.LOG_CHANNEL_ID,
   ownerRoleIds: parseIds(process.env.OWNER_ROLE_IDS),
   ownerUserIds: parseIds(process.env.OWNER_USER_IDS),
@@ -214,6 +217,10 @@ function parseDurations(value = '') {
   return arr.length ? arr : [600, 1800, 3600];
 }
 
+function parseList(value = '') {
+  return value.split(',').map(v => v.trim()).filter(Boolean);
+}
+
 function toBool(value, fallback = false) {
   if (value == null) return fallback;
   return ['1', 'true', 'yes', 'igen'].includes(String(value).toLowerCase());
@@ -285,7 +292,7 @@ async function handleLimit(interaction, level) {
 
 async function handlePanel(interaction) {
   const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder().setLabel('Panel megnyitása').setStyle(ButtonStyle.Link).setURL(`${env.panelUrl}?token=${env.panelToken}`)
+    new ButtonBuilder().setLabel('Panel megnyitása').setStyle(ButtonStyle.Link).setURL(env.panelUrl)
   );
   await interaction.reply({ embeds: [embed('Web panel', 'A gombra kattintva megnyithatod a kezelőfelületet.')], components: [row], ephemeral: true });
 }
@@ -574,13 +581,51 @@ async function appendLog(logEntry) {
 
 function startPanel() {
   const app = express();
+  const panelSessions = new Map();
+  const panelCredentials = buildPanelCredentials();
+
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
   app.use('/public', express.static(path.join(__dirname, 'public')));
 
+  app.get('/login', (req, res) => {
+    if (isPanelAuthenticated(req, panelSessions)) return res.redirect('/');
+    const errorText = req.query.error ? '<p class="error-msg">Hibás felhasználónév vagy jelszó.</p>' : '';
+    res.send(`<!doctype html><html lang="hu"><head><meta charset="UTF-8"/><title>Panel Login</title>
+      <link rel="stylesheet" href="/public/style.css" /></head><body>
+      <div class="container"><h1>Crystal Panel Belépés</h1>
+      <p>Jelentkezz be a webes moderációs felülethez.</p>${errorText}
+      <form method="post" action="/login" class="login-form">
+        <input name="username" placeholder="Felhasználónév" required />
+        <input type="password" name="password" placeholder="Jelszó" required />
+        <button type="submit">Belépés</button>
+      </form>
+      </div></body></html>`);
+  });
+
+  app.post('/login', (req, res) => {
+    const { username = '', password = '' } = req.body;
+    if (!validatePanelCredential(panelCredentials, username, password)) {
+      return res.redirect('/login?error=1');
+    }
+
+    const sessionToken = crypto.randomBytes(24).toString('hex');
+    const maxAgeMs = env.panelSessionHours * 60 * 60 * 1000;
+    panelSessions.set(sessionToken, { username, expiresAt: Date.now() + maxAgeMs });
+    res.setHeader('Set-Cookie', `panel_session=${sessionToken}; Max-Age=${Math.floor(maxAgeMs / 1000)}; HttpOnly; SameSite=Strict; Path=/`);
+    return res.redirect('/');
+  });
+
+  app.post('/logout', (req, res) => {
+    const token = getCookie(req, 'panel_session');
+    if (token) panelSessions.delete(token);
+    res.setHeader('Set-Cookie', 'panel_session=; Max-Age=0; HttpOnly; SameSite=Strict; Path=/');
+    return res.redirect('/login');
+  });
+
   app.use((req, res, next) => {
-    const token = req.query.token || req.headers['x-panel-token'] || req.body.token;
-    if (token !== env.panelToken) return res.status(401).send('Nincs hozzáférés.');
+    if (req.path.startsWith('/public') || req.path === '/login') return next();
+    if (!isPanelAuthenticated(req, panelSessions)) return res.redirect('/login');
     next();
   });
 
@@ -592,12 +637,15 @@ function startPanel() {
       <td>${escapeHtml(l.warningId || '')}</td><td>${l.timeoutDurationSec || 0}</td><td>${l.warningCount || 0}</td><td>${new Date(l.timestamp).toLocaleString('hu-HU')}</td>
     </tr>`).join('');
 
+    const activeSession = getPanelSession(req, panelSessions);
+
     res.send(`<!doctype html><html lang="hu"><head><meta charset="UTF-8"/><title>Crystal Mod Panel</title>
       <link rel="stylesheet" href="/public/style.css" /></head><body>
       <div class="container"><h1>Crystal Moderációs Panel</h1>
-      <p>Bejelentkezve panel tokennel. Gyors moderáció:</p>
+      <p>Bejelentkezve mint: <strong>${escapeHtml(activeSession?.username || 'ismeretlen')}</strong></p>
+      <form method="post" action="/logout"><button type="submit">Kijelentkezés</button></form>
+      <p>Gyors moderáció:</p>
       <form method="post" action="/action">
-        <input type="hidden" name="token" value="${env.panelToken}" />
         <input name="guildId" placeholder="Guild ID" value="${env.guildId}" required />
         <input name="userId" placeholder="Felhasználó ID" required />
         <select name="action"><option value="warn">Warn</option><option value="kick">Kick</option><option value="ban">Ban</option></select>
@@ -623,12 +671,51 @@ function startPanel() {
     if (action === 'kick') await member?.kick(reason);
     if (action === 'ban') await guild.members.ban(user.id, { reason });
 
-    res.redirect(`/?token=${env.panelToken}`);
+    res.redirect('/');
   });
 
   app.listen(env.panelPort, () => {
     console.log(`Panel fut: ${env.panelUrl}`);
   });
+}
+
+function buildPanelCredentials() {
+  const entries = [];
+  for (let i = 0; i < Math.min(env.panelUsers.length, env.panelPasswords.length); i += 1) {
+    entries.push({ username: env.panelUsers[i], password: env.panelPasswords[i] });
+  }
+  if (!entries.length) {
+    console.warn('Nincs panel felhasználó beállítva. Állítsd be: PANEL_LOGIN_USERS és PANEL_LOGIN_PASSWORDS');
+  }
+  return entries;
+}
+
+function validatePanelCredential(credentials, username, password) {
+  return credentials.some(c => c.username === username && c.password === password);
+}
+
+function getCookie(req, name) {
+  const raw = req.headers.cookie || '';
+  const parts = raw.split(';').map(v => v.trim());
+  const key = `${name}=`;
+  const found = parts.find(p => p.startsWith(key));
+  return found ? found.slice(key.length) : null;
+}
+
+function getPanelSession(req, sessions) {
+  const token = getCookie(req, 'panel_session');
+  if (!token) return null;
+  const session = sessions.get(token);
+  if (!session) return null;
+  if (Date.now() > session.expiresAt) {
+    sessions.delete(token);
+    return null;
+  }
+  return session;
+}
+
+function isPanelAuthenticated(req, sessions) {
+  return Boolean(getPanelSession(req, sessions));
 }
 
 function escapeHtml(str) {

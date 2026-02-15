@@ -17,6 +17,7 @@ Discord moderátor bot JavaScriptben, automoderációval, slash parancsokkal, f�
   - Discord log csatorna embed logok
   - JSON + sima `.log` fájl mentés
 - Web panel:
+  - külön login felület felhasználónév/jelszóval (.env-ből)
   - log visszanézés
   - gyors webes moderáció (warn/kick/ban)
 - Slash parancsok:
@@ -45,4 +46,4 @@ npm start
 
 ## Fontos
 - A `/panel` gomb a `.env`-ben beállított `PANEL_URL` címet nyitja.
-- A panel tokenes védelemmel működik (`PANEL_TOKEN`).
+- A panel belépés `.env` alapú: `PANEL_LOGIN_USERS` + `PANEL_LOGIN_PASSWORDS` (azonos sorrendben).
