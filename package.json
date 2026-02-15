@@ -2,12 +2,12 @@
   "name": "crystal-mod-bot",
   "version": "1.0.0",
   "description": "Discord moderátor bot webes panellel és automatikus moderációval",
-  "main": "src/index.js",
+  "main": "main.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node src/index.js",
-    "dev": "node --watch src/index.js",
-    "lint": "node --check src/index.js"
+    "start": "node main.js",
+    "dev": "node --watch main.js",
+    "lint": "node --check main.js"
   },
   "dependencies": {
     "discord.js": "^14.16.3",

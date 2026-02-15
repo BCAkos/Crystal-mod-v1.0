@@ -16,7 +16,7 @@ const {
   Routes
 } = require('discord.js');
 
-const DATA_DIR = path.join(__dirname, '..', 'data');
+const DATA_DIR = path.join(__dirname, 'data');
 const LOG_FILE = path.join(DATA_DIR, 'moderation-logs.json');
 const WARN_FILE = path.join(DATA_DIR, 'warnings.json');
 const MOD_LIMIT_FILE = path.join(DATA_DIR, 'daily-limits.json');
@@ -576,7 +576,7 @@ function startPanel() {
   const app = express();
   app.use(express.urlencoded({ extended: true }));
   app.use(express.json());
-  app.use('/public', express.static(path.join(__dirname, '..', 'public')));
+  app.use('/public', express.static(path.join(__dirname, 'public')));
 
   app.use((req, res, next) => {
     const token = req.query.token || req.headers['x-panel-token'] || req.body.token;

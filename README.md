@@ -36,7 +36,7 @@ npm start
 ```
 
 ## Mappák
-- `src/index.js`: bot + automod + web panel
+- `main.js`: bot + automod + web panel (Pterodactyl kompatibilis gyökér mappa)
 - `public/style.css`: panel kinézet
 - `data/moderation-logs.json`: strukturált logok
 - `data/moderation.log`: soronkénti log
